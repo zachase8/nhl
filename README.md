@@ -32,7 +32,7 @@ Players (People):
                                     # options to change what stats you want
 
     Modifiers:
-        ?stats=stasSingleSeason&season=YYYYYYYY     # single season stats
+        ?stats=statsSingleSeason&season=YYYYYYYY     # single season stats
         ?stats=homeAndAway&season=YYYYYYYY          # split between home and away games
         ?stats=winLoss&season=YYYYYYYY              # split between W/L/OT
         ?stats=byMonth&season=YYYYYYYY              # split monthly
