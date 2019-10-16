@@ -3,6 +3,7 @@ import requests
 import pickle
 import progressbar
 import time
+import pandas as pd
 
 def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=True):
     """
@@ -90,7 +91,7 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
         player_stats (dict): dictionary of requested stats
     """
     if wait:
-        time.sleep(0.25)
+        time.sleep(0.5)
 
     # endpoint to query
     endpoint_url = '/people/{}/stats?stats={}&season={}'.format(player_id, stat_type, season)
@@ -127,9 +128,13 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     # get list of every team
     all_teams = get_teams(base_url=base_url, active=active)
 
+    # progressbar to track progress
+    bar = progress.progress(all_teams)
+
     # get team rosters -- list of (roster_dict, team_id) pairs
-    team_rosters = [(get_team_roster(team[1], wait=True), team[1])
-                        for team in all_teams]
+    team_rosters = []
+    for team in bar:
+        team_rosters.append((get_team_roster(team[1], wait=True), team[1]))
 
     # create list of player dicts -- dict format like in get_team_roster docstring
     players = [player for team in team_rosters for player in team[0]]
@@ -170,6 +175,42 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
 
     return
 
+def clean_stats_data(player_stats, player_ids):
+    """
+    Cleans raw player stats data generated in update_player_stats()
+
+    Parameters:
+        player_stats (dict): formatted as {player_id: get_player_stats(id)}
+
+    Returns:
+        p_stats (dict): formatted as {player_id: player_stats}, where
+            player_stats is basically a flattened version of get_player_stats(id)
+    """
+    # get player_ids associated with player_stats
+    player_ids = player_stats.keys()
+
+    # generate state labels to fill any empty entries
+    stat_labels = ['season']
+    for p_id in player_ids:
+        if len(player_stats[p_id]['splits']) > 0:
+            stat_labels += list(player_stats[p_id]['splits'][0]['stat'].keys())
+            break
+    # default empty dictionary for players with no data
+    no_data = {label: None for label in stat_labels}
+    # construct new, flattened, dictionary
+    p_stats = dict()
+    for p_id in player_ids:
+        if len(player_stats[p_id]['splits']) == 0:
+            p_stats[p_id] = no_data
+        else:
+            p_stats = player_stats[p_id]['splits'][0]
+            inner_dict = p_stats['stat']
+            outer_dict = {'season': p_stats['season']}
+            # unpack the two dictionaries into one
+            p_stats[p_id] = {**outer_dict, **inner_dict}
+
+    return p_stats
+
 def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
                         save_path='data/stats/', load_path='data/basic/player_ids',
                         **kwargs):
@@ -202,29 +243,13 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
     player_stats = dict()
     for p_id in bar:
         player_stats[p_id] = get_player_stats(p_id, **kwargs)
-    # player_stats = {p_id: get_player_stats(p_id, **kwargs) for p_id in player_ids}
 
-    # clean player stats so we can put it into a pandas df
-    # generate state labels to fill any empty entries
-    stat_labels = ['season']
-    for p_id in player_ids:
-        if len(player_stats[p_id]['splits']) > 0:
-            stat_labels += list(player_stats[p_id]['splits'][0]['stat'].keys())
-            break
-    # default empty dictionary for players with no data
-    no_data = {label: None for label in stat_labels}
-    # construct new, flattened, dictionary
-    p_stats = dict()
-    for p_id in player_ids:
-        if len(player_stats[p_id]['splits']) == 0:
-            p_stats[p_id] = no_data
-        else:
-            inner_dict = player_stats[p_id]['splits']['stat']
-            outer_dict = {'season': player_stats[p_id]['splits']['season']}
-            # unpack the two dictionaries into one
-            p_stats[p_id] = {**outer_dict, **inner_dict}
+    with open(save_path + 'test', 'wb') as f:
+        pickle.dump(player_stats, f)
 
-    player_stats_df = pd.DataFrame.from_dict(p_stats, orient='index')
+    # clean player stats data, create pandas df of cleaned data
+    player_stats = clean_stats_data(player_stats)
+    player_stats_df = pd.DataFrame.from_dict(player_stats, orient='index')
 
     try:
         # check if we are updating a non-default stat file
