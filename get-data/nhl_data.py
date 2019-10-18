@@ -250,21 +250,21 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
     skater_df.columns = [col.replace('stat.', '') for col in list(skater_df)]
 
     # update save paths
-    g_save_path = save_path + 'goalie'
-    s_save_path = save_path + 'skater'
+    g_save_path = save_path + 'goalie_'
+    s_save_path = save_path + 'skater_'
 
     try:
         # check if we are updating a non-default stat file
         if kwargs['stat_type'] != 'statsSingleSeason':
-            g_save_path += 'player_stats' + kwargs['stat_type']
-            s_save_path += 'player_stats' + kwargs['stat_type']
+            g_save_path += 'stats' + kwargs['stat_type']
+            s_save_path += 'stats' + kwargs['stat_type']
         else:
-            g_save_path += 'player_statsSingleSeason'
-            s_save_path += 'player_statsSingleSeason'
+            g_save_path += 'statsSingleSeason'
+            s_save_path += 'statsSingleSeason'
     except KeyError:
         # if updating default stat file
-        g_save_path = save_path + 'player_statsSingleSeason'
-        s_save_path = save_path + 'player_statsSingleSeason'
+        g_save_path += 'statsSingleSeason'
+        s_save_path += 'statsSingleSeason'
 
     # pickle goalie and skater stats separately
     with open(g_save_path + season, 'wb') as f:
@@ -296,6 +296,7 @@ def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
     bar = progressbar.progressbar(seasons)
 
     for season in bar:
+        print('\n\nUpdating data from season {}-{}...'.format(season[:4], season[4:]))
         if get_lists:
             # if we need to update the player lists first
             update_player_list(base_url=base_url, season=season, **kwargs)
