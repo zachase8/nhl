@@ -5,7 +5,7 @@ import progressbar
 import time
 import pandas as pd
 
-def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=True):
+def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=False):
     """
     Queries the NHL API for team information and returns a list of active teams.
 
@@ -74,7 +74,7 @@ def get_team_roster(team_id, base_url='https://statsapi.web.nhl.com/api/v1',
     return team_roster['roster']
 
 def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
-                        stat_type='statsSingleSeason', season='20192020', wait=True):
+                        season='20192020', stat_type='statsSingleSeason', wait=True):
     """
     Queries the NHL API for the stats of a player.
 
@@ -89,6 +89,7 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
 
     Returns:
         player_stats (dict): dictionary of requested stats
+        None: if player has no stats in given season
     """
     if wait:
         time.sleep(0.5)
@@ -98,12 +99,19 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
 
     # request player statistics
     player_stats = requests.get(base_url + endpoint_url).json()
-    player_stats = player_stats['stats'][0]
+
+    # extract useful part of statistics
+    try:
+        # if the player has stats, this is where they will be
+        player_stats = player_stats['stats'][0]['splits'][0]
+    except IndexError:
+        # if player has no stats, return None
+        return None
 
     return player_stats
 
 def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
-                        save_path='data/basic/', active=True):
+                        season='20192020', save_path='data/basic/', active=False):
     """
     Updates the player dictionaries, which associate players/ids with their
         respective teams
@@ -111,6 +119,7 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     Parameters:
         base_url (str): base url to the nhl api
         save_path (str): relative path to directory where data will be saved
+        season (str): season to request players from
         active (bool): if True, only updates the active players info
 
     Returns:
@@ -129,12 +138,10 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     all_teams = get_teams(base_url=base_url, active=active)
 
     # progressbar to track progress
-    bar = progress.progress(all_teams)
+    bar = progressbar.progressbar(all_teams)
 
     # get team rosters -- list of (roster_dict, team_id) pairs
-    team_rosters = []
-    for team in bar:
-        team_rosters.append((get_team_roster(team[1], wait=True), team[1]))
+    team_rosters = [(get_team_roster(team[1], wait=True), team[1]) for team in bar]
 
     # create list of player dicts -- dict format like in get_team_roster docstring
     players = [player for team in team_rosters for player in team[0]]
@@ -160,7 +167,7 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
                     'player_id_to_team', 'team_id_to_name', 'team_name_to_id']
 
     for d, n in zip(dicts, dict_names):
-        with open(save_path + n, 'wb') as f:
+        with open(save_path + n + season, 'wb') as f:
             pickle.dump(d, f)
 
     # create/pickle player_id and team_id lists
@@ -169,51 +176,15 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     lists = [player_ids, team_ids]
     list_names = ['player_ids', 'team_ids']
 
-    for l, n in zip(lists, list_names):
-        with open(save_path + n, 'wb') as f:
-            pickle.dump(l, f)
+    for lst, name in zip(lists, list_names):
+        with open(save_path + name + '_' + season, 'wb') as f:
+            pickle.dump(lst, f)
 
     return
 
-def clean_stats_data(player_stats, player_ids):
-    """
-    Cleans raw player stats data generated in update_player_stats()
-
-    Parameters:
-        player_stats (dict): formatted as {player_id: get_player_stats(id)}
-
-    Returns:
-        p_stats (dict): formatted as {player_id: player_stats}, where
-            player_stats is basically a flattened version of get_player_stats(id)
-    """
-    # get player_ids associated with player_stats
-    player_ids = player_stats.keys()
-
-    # generate state labels to fill any empty entries
-    stat_labels = ['season']
-    for p_id in player_ids:
-        if len(player_stats[p_id]['splits']) > 0:
-            stat_labels += list(player_stats[p_id]['splits'][0]['stat'].keys())
-            break
-    # default empty dictionary for players with no data
-    no_data = {label: None for label in stat_labels}
-    # construct new, flattened, dictionary
-    p_stats = dict()
-    for p_id in player_ids:
-        if len(player_stats[p_id]['splits']) == 0:
-            p_stats[p_id] = no_data
-        else:
-            p_stats = player_stats[p_id]['splits'][0]
-            inner_dict = p_stats['stat']
-            outer_dict = {'season': p_stats['season']}
-            # unpack the two dictionaries into one
-            p_stats[p_id] = {**outer_dict, **inner_dict}
-
-    return p_stats
-
 def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
-                        save_path='data/stats/', load_path='data/basic/player_ids',
-                        **kwargs):
+                        season='20192020', save_path='data/stats/',
+                        load_path='data/basic/player_ids_', **kwargs):
     """
     Updates player stats data.
 
@@ -233,36 +204,102 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
         Updates the player stats DataFrame object
     """
     # load player ids
-    with open(load_path, 'rb') as f:
+    with open(load_path + season, 'rb') as f:
         player_ids = pickle.load(f)
 
     # progressbar to track process
     bar = progressbar.progressbar(player_ids)
 
     # request player stats
-    player_stats = dict()
-    for p_id in bar:
-        player_stats[p_id] = get_player_stats(p_id, **kwargs)
+    player_stats = {p_id: get_player_stats(p_id, **kwargs) for p_id in bar}
 
-    with open(save_path + 'test', 'wb') as f:
-        pickle.dump(player_stats, f)
+    # remove None entries (players with no stats)
+    player_stats = {key: val for key, val in player_stats.items() if val is not None}
 
-    # clean player stats data, create pandas df of cleaned data
-    player_stats = clean_stats_data(player_stats)
-    player_stats_df = pd.DataFrame.from_dict(player_stats, orient='index')
+    # update player_ids to only include those with statistics
+    player_ids = list(player_stats.keys())
+
+    # split into goalie and skater stats
+    goalies, skaters = dict(), dict()
+    for p_id in player_ids:
+        try:
+            # check if this is a goalie
+            player_stats[p_id]['stat']['ot']
+            goalies[p_id] = player_stats[p_id]
+        except KeyError:
+            # if there was a keyerror, then this is a skater
+            skaters[p_id] = player_stats[p_id]
+
+    # get skater and goalie ids to set dataframe index
+    goalie_ids, skater_ids = goalies.keys(), skaters.keys()
+    goalie_stats = [goalies[g_id] for g_id in goalie_ids]
+    skater_stats = [skaters[s_id] for s_id in skater_ids]
+
+    # create pandas dataframe objects
+    goalie_df = pd.io.json.json_normalize(goalie_stats)
+    skater_df = pd.io.json.json_normalize(skater_stats)
+
+    # set index to be player ids
+    goalie_df['player_id'] = goalie_ids
+    skater_df['player_id'] = skater_ids
+    goalie_df.set_index('player_id', inplace=True)
+    skater_df.set_index('player_id', inplace=True)
+
+    # rename columns to no longer have 'stat.----'
+    goalie_df.columns = [col.replace('stat.', '') for col in list(goalie_df)]
+    skater_df.columns = [col.replace('stat.', '') for col in list(skater_df)]
+
+    # update save paths
+    g_save_path = save_path + 'goalie'
+    s_save_path = save_path + 'skater'
 
     try:
         # check if we are updating a non-default stat file
         if kwargs['stat_type'] != 'statsSingleSeason':
-            save_path += 'player_stats' + kwargs['stat_type']
+            g_save_path += 'player_stats' + kwargs['stat_type']
+            s_save_path += 'player_stats' + kwargs['stat_type']
         else:
-            save_path += 'player_statsSingleSeason'
+            g_save_path += 'player_statsSingleSeason'
+            s_save_path += 'player_statsSingleSeason'
     except KeyError:
         # if updating default stat file
-        save_path = save_path + 'player_statsSingleSeason'
+        g_save_path = save_path + 'player_statsSingleSeason'
+        s_save_path = save_path + 'player_statsSingleSeason'
 
-    # pickle player_stats_df
-    with open(save_path, 'wb') as f:
-        pickle.dump(player_stats_df, f)
+    # pickle goalie and skater stats separately
+    with open(g_save_path + season, 'wb') as f:
+        pickle.dump(goalie_df, f)
+    with open(s_save_path + season, 'wb') as f:
+        pickle.dump(skater_df, f)
 
+    return
+
+def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
+                 get_lists=True, **kwargs):
+    """
+    Allows specification of a range of season to pull/update data from, instead
+    of needing to run update_player_stats manually over and over.
+
+    Parameters:
+        seasons (iterable): iterable containing each season to pull data for.
+            Elements of the iterable should be strings of the form '20132014'.
+        base_url (str): base url to the NHL Statistics API
+        get_lists (bool): if True, calls update_player_list() for each
+            season before calling update_player_stats().
+        **kwargs: additional arguments to be passed to update_player_lists
+            e.g. stat_type
+
+    Returns:
+        None
+    """
+    # create progress bar
+    bar = progressbar.progressbar(seasons)
+
+    for season in bar:
+        if get_lists:
+            # if we need to update the player lists first
+            update_player_list(base_url=base_url, season=season, **kwargs)
+
+        # pull and save the given seasons stats
+        update_player_stats(base_url=base_url, season=season, **kwargs)
     return
