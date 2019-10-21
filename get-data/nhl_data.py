@@ -4,6 +4,7 @@ import pickle
 import progressbar
 import time
 import pandas as pd
+import os
 
 def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=False):
     """
@@ -58,7 +59,7 @@ def get_team_roster(team_id, base_url='https://statsapi.web.nhl.com/api/v1',
     """
     if wait:
         # wait a moment to request additional data
-        time.sleep(0.25)
+        time.sleep(0.1)
 
     # endpoint to request data from
     endpoint_url = '/teams/{}/roster'.format(team_id)
@@ -92,7 +93,7 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
         None: if player has no stats in given season
     """
     if wait:
-        time.sleep(0.5)
+        time.sleep(0.1)
 
     # endpoint to query
     endpoint_url = '/people/{}/stats?stats={}&season={}'.format(player_id, stat_type, season)
@@ -160,6 +161,12 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     team_id_to_name = {team[1]: team[0] for team in all_teams}
     team_name_to_id = {team[0]: team[1] for team in all_teams}
 
+    # saving data -- update base-save path to save in the correct year subfolder
+    save_path += season[:4] + '-' + season[4:] + '/'
+    # check if the subfolder exists, if not, create it
+    if not os.path.exists(save_path):
+        os.mkdir('./' + save_path)
+
     # pickle mapping dictionaries
     dicts = [name_to_id, id_to_name, team_to_player, player_to_team,
                 team_id_to_name, team_name_to_id]
@@ -167,7 +174,7 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
                     'player_id_to_team', 'team_id_to_name', 'team_name_to_id']
 
     for d, n in zip(dicts, dict_names):
-        with open(save_path + n + season, 'wb') as f:
+        with open(save_path + n, 'wb') as f:
             pickle.dump(d, f)
 
     # create/pickle player_id and team_id lists
@@ -177,14 +184,14 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
     list_names = ['player_ids', 'team_ids']
 
     for lst, name in zip(lists, list_names):
-        with open(save_path + name + '_' + season, 'wb') as f:
+        with open(save_path + name, 'wb') as f:
             pickle.dump(lst, f)
 
     return
 
 def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
                         season='20192020', save_path='data/stats/',
-                        load_path='data/basic/player_ids_', **kwargs):
+                        load_path='data/basic/', **kwargs):
     """
     Updates player stats data.
 
@@ -203,8 +210,9 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
 
         Updates the player stats DataFrame object
     """
+    season_sub = season[:4] + '-' + season[4:]
     # load player ids
-    with open(load_path + season, 'rb') as f:
+    with open(load_path + season_sub + '/player_ids', 'rb') as f:
         player_ids = pickle.load(f)
 
     # progressbar to track process
@@ -249,27 +257,38 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
     goalie_df.columns = [col.replace('stat.', '') for col in list(goalie_df)]
     skater_df.columns = [col.replace('stat.', '') for col in list(skater_df)]
 
-    # update save paths
-    g_save_path = save_path + 'goalie_'
-    s_save_path = save_path + 'skater_'
+    # update save_path to save in proper subfolders
+    save_path += season_sub + '/'
+    if not os.path.exists(save_path):
+        os.mkdir('./' + save_path)
 
+    # determine stat type subfolder to save in
     try:
         # check if we are updating a non-default stat file
         if kwargs['stat_type'] != 'statsSingleSeason':
-            g_save_path += 'stats' + kwargs['stat_type']
-            s_save_path += 'stats' + kwargs['stat_type']
+            save_path += kwargs['stat_type'] + '/'
+            # s_save_path += 'stats' + kwargs['stat_type']
         else:
-            g_save_path += 'statsSingleSeason'
-            s_save_path += 'statsSingleSeason'
+            save_path += 'SingleSeason/'
+            # s_save_path += 'statsSingleSeason'
     except KeyError:
         # if updating default stat file
-        g_save_path += 'statsSingleSeason'
-        s_save_path += 'statsSingleSeason'
+        save_path += 'SingleSeason/'
+        # s_save_path += 'statsSingleSeason'
+
+    # create separate goalie and skater paths
+    g_save_path = save_path
+    s_save_path = save_path
+
+    if not os.path.exists('./' + g_save_path):
+        os.mkdir(g_save_path)
+    if not os.path.exists('./' + s_save_path):
+        os.mkdir(s_save_path)
 
     # pickle goalie and skater stats separately
-    with open(g_save_path + season, 'wb') as f:
+    with open(save_path + 'goalie_stats', 'wb') as f:
         pickle.dump(goalie_df, f)
-    with open(s_save_path + season, 'wb') as f:
+    with open(save_path + 'skater_stats', 'wb') as f:
         pickle.dump(skater_df, f)
 
     return
@@ -292,15 +311,23 @@ def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
     Returns:
         None
     """
+    start = True
     # create progress bar
-    bar = progressbar.progressbar(seasons)
 
-    for season in bar:
+    for season in seasons:
         print('\n\nUpdating data from season {}-{}...'.format(season[:4], season[4:]))
+        if start:
+            bar = progressbar.ProgressBar(max_value=len(seasons)).start()
+            start = False
+        else:
+            bar.update()
+
         if get_lists:
             # if we need to update the player lists first
             update_player_list(base_url=base_url, season=season, **kwargs)
 
         # pull and save the given seasons stats
         update_player_stats(base_url=base_url, season=season, **kwargs)
+
+    bar.finish()
     return
