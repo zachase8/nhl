@@ -311,16 +311,13 @@ def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
     Returns:
         None
     """
-    start = True
-    # create progress bar
+    # number of seasons
+    n = len(seasons)
+    season_n = 1
 
     for season in seasons:
-        print('\n\nUpdating data from season {}-{}...'.format(season[:4], season[4:]))
-        if start:
-            bar = progressbar.ProgressBar(max_value=len(seasons)).start()
-            start = False
-        else:
-            bar.update()
+        print('\n\nUpdating data from season {}-{} ({}/{})...'.format(season[:4],
+                season[4:], season_n, n))
 
         if get_lists:
             # if we need to update the player lists first
@@ -329,5 +326,6 @@ def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
         # pull and save the given seasons stats
         update_player_stats(base_url=base_url, season=season, **kwargs)
 
-    bar.finish()
+        season_n += 1
+
     return
