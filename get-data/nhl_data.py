@@ -1,10 +1,12 @@
 # nhl_data.py
 import requests
+from pymongo import MongoClient
 import pickle
 import progressbar
 import time
 import pandas as pd
 import os
+
 
 def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=False):
     """
@@ -29,8 +31,9 @@ def get_teams(base_url='https://statsapi.web.nhl.com/api/v1', active=False):
 
     return teams
 
+
 def get_team_roster(team_id, base_url='https://statsapi.web.nhl.com/api/v1',
-                        season=False, wait=True):
+                        season=None, wait=True):
     """
     Queries the NHL API for roster information for a given team
 
@@ -57,6 +60,11 @@ def get_team_roster(team_id, base_url='https://statsapi.web.nhl.com/api/v1',
             }
         }
     """
+    # if season is not specified, assume it is the current season
+    if season is None:
+        season = requests.get(base_url + '/seasons/current').json()['seasons']
+        season = season[0]['seasonId']
+
     if wait:
         # wait a moment to request additional data
         time.sleep(0.1)
@@ -74,8 +82,9 @@ def get_team_roster(team_id, base_url='https://statsapi.web.nhl.com/api/v1',
     # extract player information
     return team_roster['roster']
 
+
 def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
-                        season='20192020', stat_type='statsSingleSeason', wait=True):
+                        season=None, stat_type='statsSingleSeason', wait=True):
     """
     Queries the NHL API for the stats of a player.
 
@@ -92,6 +101,11 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
         player_stats (dict): dictionary of requested stats
         None: if player has no stats in given season
     """
+    # if season is not specified, assume it is the current season
+    if season is None:
+        season = requests.get(base_url + '/seasons/current').json()['seasons']
+        season = season[0]['seasonId']
+
     if wait:
         time.sleep(0.1)
 
@@ -111,8 +125,9 @@ def get_player_stats(player_id, base_url='https://statsapi.web.nhl.com/api/v1',
 
     return player_stats
 
+
 def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
-                        season='20192020', save_path='data/basic/', active=False):
+                        season=None, save_path='data/basic/', active=False):
     """
     Updates the player dictionaries, which associate players/ids with their
         respective teams
@@ -135,6 +150,11 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
             player_to_team: {player_id: team_id}
 
     """
+    # if season is not specified, assume it is the current season
+    if season is None:
+        season = requests.get(base_url + '/seasons/current').json()['seasons']
+        season = season[0]['seasonId']
+
     # get list of every team
     all_teams = get_teams(base_url=base_url, active=active)
 
@@ -189,8 +209,9 @@ def update_player_list(base_url='https://statsapi.web.nhl.com/api/v1',
 
     return
 
+
 def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
-                        season='20192020', save_path='data/stats/',
+                        season=None, save_path='data/stats/',
                         load_path='data/basic/', **kwargs):
     """
     Updates player stats data.
@@ -210,6 +231,11 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
 
         Updates the player stats DataFrame object
     """
+    # if season is not specified, assume it is the current season
+    if season is None:
+        season = requests.get(base_url + '/seasons/current').json()['seasons']
+        season = season[0]['seasonId']
+
     season_sub = season[:4] + '-' + season[4:]
     # load player ids
     with open(load_path + season_sub + '/player_ids', 'rb') as f:
@@ -293,6 +319,7 @@ def update_player_stats(base_url='https://statsapi.web.nhl.com/api/v1',
 
     return
 
+
 def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
                  get_lists=True, **kwargs):
     """
@@ -329,3 +356,86 @@ def batch_update(seasons, base_url='https://statsapi.web.nhl.com/api/v1',
         season_n += 1
 
     return
+
+
+def get_schedule(team_id, season=None, base_url='https://statsapi.web.nhl.com/api/v1'):
+    """
+    Queries the NHL API for a team's schedule
+    """
+    # if season is not specified, assume it is the current season
+    if season is None:
+        season = requests.get(base_url + '/seasons/current').json()['seasons']
+        season = season[0]['seasonId']
+
+    # request schedule information
+    schedule = requests.get(base_url + f'/schedule?season={season}&teamId={team_id}')
+    # extract useful information
+    schedule = schedule.json()['dates']
+
+    
+    # mongodb
+    # schedule.insert_one({'TEAM': {'SEASON': LIST_OF_GAMES}})
+
+
+
+"""
+A schedule request returns json of the form
+    {
+        'copyright':    Copyright info,
+        'totalItems:    int,
+        'totalEvents':  int,
+        'totalGames':   int,
+        'totalMatches': int,
+        'wait':         int,
+        'dates':        list(dict)
+    }
+
+where each element of the 'dates' list is of the form
+    {
+        'date':         'YYYY-MM-DD'
+        'totalItems:    int,
+        'totalEvents':  int,
+        'totalGames':   int,
+        'totalMatches': int,
+        'games':        list(dict)
+        'events':       list(dict - usually empty)
+        'matches':      list(dict - usually empty)
+    }
+where each element of 'games' (typically only the one game) is of the form
+    {
+    'gamePk':       game id number (?) with form YYYY------
+    'link':         /api/v1/game/{gamePk}/feed/live
+    'gameType':     string denoting game type (regular season: R, etc.)
+    'season':       YYYYYYYY (season game is played in)
+    'gameDate':     YYYY-MM-DDTHH:MM:SSZ
+    'status':       {
+                        'abstractGameState':    str 'Final', etc.
+                        'codedGameState':       int (??)
+                        'detailedState':        str 'Final', etc.
+                        'statusCode':           int (??)
+                        'startTimeTBD':         bool
+                    }
+    'teams':        {
+                        'away': {
+                                    'leagueRecord': {
+                                                        'wins':     num of wins,
+                                                        'losses':   num losses,
+                                                        'ot':       ot losses,
+                                                        'type':     league (as opposed to conference, etc.)
+                                                    },
+                                    'score':    goals for
+                                    'team':     {
+                                                    'id':       int - team id
+                                                    'name':     str - team name
+                                                    'link':     /api/v1/teams/{id}
+                                                }
+                                }
+                        'home': {same as for away}
+                    }
+    'venue':        {
+                        'name': arena name,
+                        'link': /api/v1/venues/null
+                    },
+    'content':      /api/v1/game/{gamePk}/content
+    }
+"""
